@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+openai
+langchain-community 
+langchain 
+langchain-openai
+beautifulsoup4
+chromadb
+pypdf
