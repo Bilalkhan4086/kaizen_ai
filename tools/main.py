@@ -9,12 +9,11 @@ from langchain_core.tools import tool # Use tool decorator for simplicity
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from tools.weather import get_weather
 from tools.rag import ask_rag_question
+from config import OPENAI_API_KEY
 
-from dotenv import load_dotenv
 
 # --- Environment Setup ---
-load_dotenv()
-openai_api_key = os.getenv("OPENAI_API_KEY")
+openai_api_key = OPENAI_API_KEY
 if not openai_api_key:
     raise ValueError("OPENAI_API_KEY environment variable not set.")
 
