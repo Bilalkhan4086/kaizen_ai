@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool # Use tool decorator for simplicity
+from utils.common import get_redis_message_history
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from tools.weather import get_weather
 from tools.rag import ask_rag_question
@@ -41,26 +42,22 @@ class AnswerResponse(BaseModel):
     tool_calls_made: List[Dict[str, Any]] = Field(default_factory=list, description="Details of any tools called during processing.")
 
 # --- API Endpoint ---
-async def ask_llm_with_tools(question: QuestionRequest):
+async def ask_llm_with_tools(question: QuestionRequest, session_id: str):
     """
     Receives a question, processes it using the LLM, potentially calls tools,
     and returns the final answer.
     """
-    print(f"\n--- Received Question: {question} ---")
-    # print(f"Chat History: {request.chat_history}")
+    print(f"--- Session ID: {session_id} ---")
+    # Generate or reuse session_id
+    chat_history = get_redis_message_history(session_id)
 
-    # 1. Construct the message history
-    messages = []
-    # Add existing history if provided
-    # for msg in request.chat_history:
-    #     if msg.get("role") == "human":
-    #         messages.append(HumanMessage(content=msg.get("content", "")))
-    #     elif msg.get("role") == "ai" or msg.get("role") == "assistant": # Handle both common names
-    #          messages.append(AIMessage(content=msg.get("content", "")))
-        # We might need to handle tool messages in history too for multi-turn tool use
+    # Reconstruct messages from Redis
+    messages = chat_history.messages.copy()
 
     # Add the current user question
-    messages.append(HumanMessage(content=question))
+    user_message = HumanMessage(content=question)
+    messages.append(user_message)
+    chat_history.add_message(user_message)
 
     tool_calls_made_info = []
 
@@ -128,6 +125,8 @@ async def ask_llm_with_tools(question: QuestionRequest):
                 print(f"--- Calling LLM again with tool results ---")
                 final_response: AIMessage = llm_with_tools.invoke(messages) # Use llm_with_tools again in case it needs *another* tool
                 print(f"--- Final LLM Response after tool calls: {final_response.content} ---")
+                messages.append(final_response)
+                chat_history.add_message(final_response)
                 answer = final_response.content
             else:
                  # Should not happen if ai_msg.tool_calls was non-empty, but as fallback:
@@ -137,6 +136,8 @@ async def ask_llm_with_tools(question: QuestionRequest):
             # 5. No Tool Calls Needed - The first response is the final answer
             print("--- No tool calls requested by LLM ---")
             answer = ai_msg.content
+            messages.append(ai_msg.content)
+            chat_history.add_message(ai_msg.content)
 
         return AnswerResponse(answer=answer, tool_calls_made=tool_calls_made_info)
 
