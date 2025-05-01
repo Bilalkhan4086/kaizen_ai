@@ -7,4 +7,6 @@ langchain-openai
 beautifulsoup4
 chromadb
 pypdf
-jwt
+pyjwt
+requests
+redis

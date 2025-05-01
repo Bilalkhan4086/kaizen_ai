@@ -1,42 +1,44 @@
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Header, Depends
 from pydantic import BaseModel
 from tools.main import ask_llm_with_tools
-from utils.common import token_validator
-from fastapi.responses import JSONResponse
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import FastAPI, Security, HTTPException
+from fastapi.security import APIKeyHeader
+from typing import Optional,Annotated
+from fastapi.security import HTTPBearer
+from middleware import app_middleware
+
 
 app = FastAPI(title="RAG with FastAPI + LangChain")
 
 security = HTTPBearer()
 
+api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
+
+async def get_token(authorization: Optional[str] = Security(api_key_header)):
+    if authorization:
+        if authorization.startswith("Bearer "):
+            token = authorization[7:]
+            return token
+        else:
+            raise HTTPException(status_code=400, detail="Invalid authorization header format")
+    else:
+        raise HTTPException(status_code=403, detail="Authorization token missing")
+
+
+
 # Add the middleware
-@app.middleware("http")
-async def token_validation_middleware(request: Request, call_next):
-    if request.url.path in ["/docs", "/openapi.json", "/redoc"]:
-        return await call_next(request)
-    
-    try:
-        token = request.headers.get("Authorization")
+app_middleware(app)
 
-        if not token:
-            return JSONResponse(status_code=401, content={"detail": "Missing token"})
 
-        if token.lower().startswith("bearer "):
-            token = token[7:]
-
-        if not token_validator(token):
-            return JSONResponse(status_code=401, content={"detail": "Invalid token"})
-        
-        request.state.user_uuid = token
-        return await call_next(request)
-
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 class QueryRequest(BaseModel):
     question: str
 
 @app.post("/ask")
-async def ask_question(req: QueryRequest,request: Request,token: HTTPAuthorizationCredentials = Depends(security)):
-    answer = await ask_llm_with_tools(req.question,session_id=request.state.user_uuid)
+async def ask_question(req: QueryRequest,  uuid: Annotated[Optional[str] , Header(convert_underscores=True)], token: str = Depends(get_token),sandbox_uuid: Annotated[Optional[str] , Header(convert_underscores=True)] = "", organization_uuid: Annotated[Optional[str]  , Header(convert_underscores=True)] = ""):
+    # Create a QuestionRequest object for ask_llm_with_tools
+    print("req.headers", sandbox_uuid, organization_uuid, uuid)
+    answer = await ask_llm_with_tools(req.question, session_id="1234567890123", headers={"sandbox_uuid": sandbox_uuid, "organization_uuid": organization_uuid, "uuid": uuid, "Authorization": f"Bearer {token}"})
     return {"answer": answer.answer}
+
+

@@ -8,7 +8,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool # Use tool decorator for simplicity
 from utils.common import get_redis_message_history
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from tools.weather import get_weather
+from tools.seat_profile import get_seat_profile_tool
 from tools.rag import ask_rag_question
 from config import OPENAI_API_KEY
 
@@ -20,7 +20,7 @@ if not openai_api_key:
 
 # --- Tool Registry ---
 # Collect all defined tools
-tools = [get_weather, ask_rag_question]
+tools = [get_seat_profile_tool, ask_rag_question]
 tool_map = {t.name: t for t in tools} # Dictionary to easily access tools by name
 
 # --- LLM Setup ---
@@ -33,34 +33,41 @@ llm_with_tools = llm.bind_tools(tools)
 
 
 # --- Request/Response Models ---
-class QuestionRequest(BaseModel):
-    question: str = Field(..., description="The question asked by the user.")
-    chat_history: List[Dict[str, str]] = Field(default_factory=list, description="Optional chat history (list of {'role': 'human'/'ai', 'content': '...'})")
+
 
 class AnswerResponse(BaseModel):
     answer: str = Field(..., description="The final answer from the LLM.")
     tool_calls_made: List[Dict[str, Any]] = Field(default_factory=list, description="Details of any tools called during processing.")
 
 # --- API Endpoint ---
-async def ask_llm_with_tools(question: QuestionRequest, session_id: str):
+async def ask_llm_with_tools(question: str, session_id: str,headers: Dict[str, str]):
     """
     Receives a question, processes it using the LLM, potentially calls tools,
     and returns the final answer.
+    Based on the tool output, the LLM will call the tool again.
     """
+    print("headers",headers)
     print(f"--- Session ID: {session_id} ---")
     # Generate or reuse session_id
     chat_history = get_redis_message_history(session_id)
-
     # Reconstruct messages from Redis
     messages = chat_history.messages.copy()
-
     # Add the current user question
-    user_message = HumanMessage(content=question)
+    prompt_instruction = (
+    "You are a helpful assistant processing a user's request within an ongoing conversation. "
+    "Please answer the user's latest question based *first* on the information available in our "
+    "conversation history (including previous tool calls and their results). "
+    "Only use the available tools if the answer cannot be found or requires updated information "
+    "not present in the history.\n\n"
+    "User's current question: "
+)
+
+    user_message = HumanMessage(content=f"{prompt_instruction} {question}")
     messages.append(user_message)
     chat_history.add_message(user_message)
-
+   
     tool_calls_made_info = []
-
+    print("messages",messages)
     try:
         # 2. First LLM call - Let the LLM decide if it needs a tool
         ai_msg: AIMessage = llm_with_tools.invoke(messages)
@@ -84,7 +91,9 @@ async def ask_llm_with_tools(question: QuestionRequest, session_id: str):
                     selected_tool = tool_map[tool_name]
                     try:
                         # Execute the tool
-                        tool_output = selected_tool.invoke(tool_args)
+                        print(f"  - Executing tool: {tool_name}")
+                        tool_args["headers"] = {k: v for k, v in headers.items() if v}
+                        tool_output = await selected_tool.ainvoke(tool_args)
                         print(f"  - Tool Output: {tool_output}")
                         # Record the call for the response
                         tool_calls_made_info.append({
@@ -136,8 +145,6 @@ async def ask_llm_with_tools(question: QuestionRequest, session_id: str):
             # 5. No Tool Calls Needed - The first response is the final answer
             print("--- No tool calls requested by LLM ---")
             answer = ai_msg.content
-            messages.append(ai_msg.content)
-            chat_history.add_message(ai_msg.content)
 
         return AnswerResponse(answer=answer, tool_calls_made=tool_calls_made_info)
 
@@ -145,11 +152,3 @@ async def ask_llm_with_tools(question: QuestionRequest, session_id: str):
         print(f"Error processing request: {e}")
         # Log the exception traceback here in a real app
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
-
-# --- Run the app (for local development) ---
-if __name__ == "__main__":
-    import uvicorn
-    print("Starting FastAPI server...")
-    print("Available tools:", [t.name for t in tools])
-    print("API Docs available at http://127.0.0.1:8000/docs")
-    uvicorn.run(app, host="127.0.0.1", port=8000)
