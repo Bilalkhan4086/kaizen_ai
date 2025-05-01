@@ -18,11 +18,11 @@ def app_middleware(app: FastAPI):
             if token.startswith("Bearer "):
                 token = token.split(" ")[1]
 
-            if not token_validator(token):
+            if not token_validator(token,request):
                 return JSONResponse(status_code=401, content={"detail": "Invalid token"})
             
-            request.state.user_uuid = token
             return await call_next(request)
 
         except Exception as e:
+            print(e)
             return JSONResponse(status_code=500, content={"detail": "Internal server error"})

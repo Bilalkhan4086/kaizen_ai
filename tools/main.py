@@ -1,8 +1,6 @@
-import os
-import json
 from typing import List, Dict, Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import  HTTPException
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool # Use tool decorator for simplicity
@@ -40,7 +38,7 @@ class AnswerResponse(BaseModel):
     tool_calls_made: List[Dict[str, Any]] = Field(default_factory=list, description="Details of any tools called during processing.")
 
 # --- API Endpoint ---
-async def ask_llm_with_tools(question: str, session_id: str,headers: Dict[str, str]):
+async def ask_llm_with_tools(question: str, session_id: str, headers: Dict[str, str]):
     """
     Receives a question, processes it using the LLM, potentially calls tools,
     and returns the final answer.
@@ -67,7 +65,6 @@ async def ask_llm_with_tools(question: str, session_id: str,headers: Dict[str, s
     chat_history.add_message(user_message)
    
     tool_calls_made_info = []
-    print("messages",messages)
     try:
         # 2. First LLM call - Let the LLM decide if it needs a tool
         ai_msg: AIMessage = llm_with_tools.invoke(messages)
@@ -92,7 +89,7 @@ async def ask_llm_with_tools(question: str, session_id: str,headers: Dict[str, s
                     try:
                         # Execute the tool
                         print(f"  - Executing tool: {tool_name}")
-                        tool_args["headers"] = {k: v for k, v in headers.items() if v}
+                        tool_args["headers"] = headers
                         tool_output = await selected_tool.ainvoke(tool_args)
                         print(f"  - Tool Output: {tool_output}")
                         # Record the call for the response
